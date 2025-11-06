@@ -69,16 +69,16 @@ gp_optimize <- function(K, Y, optim.tol=0.1) {
 #' @importFrom Rcpp sourceCpp
 #'
 #' @export
-gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
+gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE, 
                      scale = TRUE, kernel_type = "gaussian", period = NULL,
                      mixed_data = FALSE, cat_columns = NULL, Xtest = NULL) {
-
+  
   # Validate kernel_type matches available options
-  kernel_type <- match.arg(kernel_type,
-                           c("gaussian",
-                             "gaussian_linear",
+  kernel_type <- match.arg(kernel_type, 
+                           c("gaussian", 
+                             "gaussian_linear", 
                              "gaussian_quadratic",
-                             "gaussian_periodic_linear",
+                             "gaussian_periodic_linear", 
                              "gaussian_periodic_quadratic"))
 
   # Check if period is required
@@ -86,95 +86,152 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
   if (needs_period && is.null(period)) {
     stop(sprintf("Error: Period parameter required for kernel type '%s'.", kernel_type))
   }
-
+  
   # Pre-process outcome Y
   Y.init <- as.numeric(Y)
   Y.init.mean <- mean(Y.init)
   Y.init.sd <- sd(Y.init)
   Y <- scale(Y, center = Y.init.mean, scale = Y.init.sd)
-
+  
   # Pre-process covariates X
   X <- as.matrix(X)
   X.orig <- X
-  n <- nrow(X)
-  d <- ncol(X)
-
-  #mixed_data processing
+  #n <- nrow(X)
+  #d <- ncol(X)
+  
+  if (!is.null(Xtest)) {
+    Xtest.orig <- as.matrix(Xtest) # Save original *unprocessed* Xtest
+  } else {
+    Xtest.orig <- NULL
+  }
+  cat_num_processed <- NULL
+  cont_num_processed <- 1:ncol(X) # Default if mixed_data = FALSE
+  
+  ## mixed_data processing
   if(mixed_data == TRUE){
-    X_mix <- mixed_data_processing(X, cat_columns = cat_columns, Xtest=Xtest)
-    X <- X_mix$X
-    cat_num <- X_mix$cat_num
+    # Xtest is passed here to get all factor levels
+    X_mix <- mixed_data_processing(X.orig, cat_columns = cat_columns, Xtest = Xtest.orig) 
+    X <- X_mix$X_train # use the processed X_train
+    cat_num_processed <- X_mix$cat_num_processed
+    cont_num_processed <- X_mix$cont_num_processed
+    
+    if (is.null(colnames(X))) {
+      d <- ncol(X)
+      colnames(X) <- paste("x", 1:d, sep = "")
+    }
+  } else {
+    # if no mixed data, ensure X is numeric
+    X <- apply(X, 2, as.numeric)
+    if (is.null(colnames(X))) {
+      d <- ncol(X)
+      colnames(X) <- paste("x", 1:d, sep = "")
+    }
   }
-
-  if (is.null(colnames(X))) {
-    colnames(X) <- paste("x", 1:d, sep = "")
-  }
-  X.init <- X
-
+  X.init <- X #processed, unscaled X
+  
   period_original <- period # Store original period before scaling
-
-  if (scale == TRUE) { # if scale == TRUE
-    X.init.mean <- apply(X.init, 2, mean)
-    X.init.sd <- apply(X.init, 2, sd)
-    if (sum(X.init.sd == 0) | sum(is.na(X.init.sd)) > 0) {
-      stop("at least one column in X is a constant, please remove the constant(s)")
+  
+  ## Scaling & pre-kernel adjustments
+  X.init.mean <- rep(0, ncol(X)) 
+  names(X.init.mean) <- colnames(X)
+  X.init.sd <- rep(1, ncol(X))   
+  names(X.init.sd) <- colnames(X)
+  
+  if (scale == TRUE) { 
+    # Case 1: Mixed Data (scale only continuous)
+    if (!is.null(cont_num_processed) && length(cont_num_processed) > 0) {
+      cont_data <- X[, cont_num_processed, drop = FALSE]
+      # Calculate stats only for continuous columns
+      cont_mean <- apply(cont_data, 2, mean) 
+      cont_sd <- apply(cont_data, 2, sd)     
+      if (sum(cont_sd == 0, na.rm=TRUE) > 0 | sum(is.na(cont_sd)) > 0) {
+        stop("at least one *continuous* column in X is a constant, please remove it")
+      }
+      X.init.mean[cont_num_processed] <- cont_mean
+      X.init.sd[cont_num_processed] <- cont_sd
+      X[, cont_num_processed] <- scale(cont_data, center = cont_mean, scale = cont_sd)
+      
+    } else if (mixed_data == FALSE) {
+      # Case 2: All Data is Continuous
+      X.init.mean <- apply(X, 2, mean)
+      X.init.sd <- apply(X, 2, sd)
+      if (sum(X.init.sd == 0, na.rm=TRUE) > 0 | sum(is.na(X.init.sd)) > 0) {
+        stop("at least one column in X is a constant, please remove the constant(s)")
+      }
+      X <- scale(X, center = X.init.mean, scale = X.init.sd)
     }
-    X <- scale(X, center = TRUE, scale = X.init.sd)
-
+    
     # Scale period if provided and needed
+    #### time variable should be the first column of the data! ####
     if (!is.null(period) && needs_period) {
-      period_scaled <- period / X.init.sd[1] # Period applies to first column (time variable)
-      #message(sprintf("Period scaled from %.2f to %.4f based on time variable scaling", period, period_scaled))
+      first_cont_col_idx <- NULL
+      if (mixed_data == TRUE) {
+        first_cont_col_idx <- cont_num_processed[1] # First from cont list
+      } else {
+        first_cont_col_idx <- 1 # If not mixed, it's just col 1
+      }
+      
+      if (!is.null(first_cont_col_idx) && !is.na(first_cont_col_idx)) {
+        time_col_sd <- X.init.sd[first_cont_col_idx] 
+        period_scaled <- period / time_col_sd
+      } else {
+        warning("No continuous columns found for period scaling. Using unscaled period.")
+        period_scaled <- period
+      }
     } else {
-      period_scaled <- NULL  # Set to NULL for non-periodic kernels
+      period_scaled <- NULL 
     }
+    
   } else { # if scale == FALSE
-    X.init.sd <- 1
-    X.init.mean <- 0
-    # Only set period_scaled if using a periodic kernel
+    # We keep the defaults: X.init.mean = 0s and X.init.sd = 1s
     if (!is.null(period) && needs_period) {
-      period_scaled <- period  # No scaling needed
+      period_scaled <- period 
     } else {
       period_scaled <- NULL
     }
   }
-
+  
+  # apply sqrt(0.5) to categorical columns
+  if(mixed_data == TRUE && !is.null(cat_num_processed)) {
+    X[, cat_num_processed] <- sqrt(0.5) * X[, cat_num_processed, drop = FALSE]
+  }
+  
   # Optimize b by maximizing variance of K when `b=null`
   if (is.null(b)) {
     b <- getb_maxvar(X, kernel_type, period_scaled)
   }
-
+  
   ## Calculate GP
   K <- kernel_symmetric(X, b = b, kernel_type = kernel_type, period = period_scaled)
-
+  
   # Optimize s2, given K (with optimized b)
   if (isTRUE(optimize)) {
     opt <- gp_optimize(K = K, Y = Y)
     s2 <- opt$s2opt
   } #otherwise, user-specified s2 is given (or default s2)
-
+  
   L <- chol(K + diag(s2, nrow(K)))
   K_inv <- Matrix::chol2inv(L)
   m <- rep(0, nrow(X)) # zero mean prior
-  a <- K_inv %*% (Y - m) # alpha with simplified computation using K^-1
+  a <- K_inv %*% (Y - m)
   post_mean_scaled <- K %*% a
   post_cov_scaled <- K - K %*% K_inv %*% K
   prior_mean_scaled <- m
-
+  
   # Rescale to original
   post_mean_orig <- post_mean_scaled * Y.init.sd + Y.init.mean
   post_cov_orig <- Y.init.sd^2 * post_cov_scaled
-
+  
   results <- list(
     # Data
-    X.orig = X.orig,
-    X.init = X.init,
-    X.init.mean = X.init.mean,
+    X.orig = X.orig, # unprocessed original X
+    X.init = X.init, # mean vector (cont only)
+    X.init.mean = X.init.mean, # SD vectors (cont only)
     X.init.sd = X.init.sd,
     Y.init.mean = Y.init.mean,
     Y.init.sd = Y.init.sd,
     Y = Y,
-    X = X,
+    X = X, # final matrix X used for K (scaled for cont vars, sqrt(0.5) applied for cat vars)
     # Parameters
     b = b,
     s2 = s2,
@@ -190,8 +247,11 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
     post_cov_scaled = post_cov_scaled,
     post_cov_orig = post_cov_orig,
     prior_mean_scaled = prior_mean_scaled,
+    # Mixed data
     mixed_data = mixed_data,
-    cat_columns = cat_columns,
+    cat_columns = cat_columns, # original spec
+    cat_num_processed = cat_num_processed, # processed cat indices
+    cont_num_processed = cont_num_processed, # processed cont indices
     scale = scale,
     Xcolnames = colnames(X)
   )
@@ -218,8 +278,8 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
 
 gp_predict <- function(gp, Xtest) {
   mixed_data <- gp$mixed_data
-  Xtest_init <- as.matrix(Xtest)
-
+  Xtest_init <- as.matrix(Xtest) #unprocessed test data
+  
   if(!isTRUE(mixed_data)){
     Xtest <- sweep(Xtest_init, MARGIN=2, gp$X.init.mean, FUN = "-")
     Xtest <- sweep(Xtest, MARGIN=2, gp$X.init.sd, FUN = "/")
@@ -227,38 +287,60 @@ gp_predict <- function(gp, Xtest) {
     Xtest_mix <- mixed_data_processing(gp$X.orig,
                                        cat_columns = gp$cat_columns,
                                        Xtest=Xtest_init)
-    Xtest <- Xtest_mix$X
-
-    if(sum(gp$Xcolnames != colnames(Xtest))>0){
-      print("Column names of training and testing data sets are not matching. It is probable that the categorical variables are causing issues.")
+    Xtest_processed <- Xtest_mix$X_test # one-hot encoded, unscaled test data
+    
+    # Check column consistency
+    if (is.null(Xtest_processed)) {
+      stop("Xtest processing failed, resulting matrix is NULL.")
     }
-
-    Xtest_cat <- sqrt(0.5)*Xtest[, gp$cat_num, drop= F]
-    Xtest_cont <- Xtest[, -gp$cat_num, drop = F]
-    Xtest_cont <- sweep(Xtest_cont, 2, gp$X.init.mean, FUN = "-")
-    Xtest_cont <- sweep(Xtest_cont, 2, gp$X.init.sd, FUN = "/")
+    if (ncol(Xtest_processed) != length(gp$Xcolnames)) {
+      stop(sprintf("Processed Xtest has %d cols, but model was trained on %d cols. Check categorical levels.", 
+                   ncol(Xtest_processed), length(gp$Xcolnames)))
+    }
+    
+    # Reorder columns to match training order
+    if (sum(colnames(Xtest_processed) != gp$Xcolnames) > 0) {
+      if (!all(gp$Xcolnames %in% colnames(Xtest_processed))) {
+        stop("Processed Xtest is missing columns that were present in training.")
+      }
+      Xtest_processed <- Xtest_processed[, gp$Xcolnames, drop = FALSE]
+    }
+    
+    Xtest_cat <- Xtest_processed[, gp$cat_num_processed, drop = FALSE]
+    Xtest_cont <- Xtest_processed[, gp$cont_num_processed, drop = FALSE]
+    Xtest_cat <- sqrt(0.5) * Xtest_cat
+    
+    if (isTRUE(gp$scale)) {
+      if (ncol(Xtest_cont) > 0) { 
+        # get the correct mean/sd values from named vectors
+        cont_means <- gp$X.init.mean[gp$cont_num_processed]
+        cont_sds <- gp$X.init.sd[gp$cont_num_processed]
+        
+        Xtest_cont <- sweep(Xtest_cont, 2, cont_means, FUN = "-")
+        Xtest_cont <- sweep(Xtest_cont, 2, cont_sds, FUN = "/")
+      }
+      # if ncol(Xtest_cont) is 0, do nothing
+    }
     Xtest <- as.matrix(cbind(Xtest_cat, Xtest_cont))
+    # ensure final column order matches gp$X (which is cat_cols, then cont_cols)
+    colnames(Xtest) <- gp$Xcolnames
   }
-
+  
+  ## Prediction
   if (ncol(gp$X) != ncol(Xtest)) {
-    print("ncol(Xtest) differs from ncol(Xtrain).")
-    if(sum(!(colnames(Xtest) %in% gp$Xcolnames)) > 0){
-      Xtest <- Xtest[,-c(!(colnames(Xtest) %in% gp$Xcolnames))]
-    }else if(sum(!(gp$Xcolnames %in% colnames(Xtest)))){
-      gp$X <- gp$X[,-c(!(gp$Xcolnames %in% colnames(Xtest)))]
-    }
+    stop("Internal Error: Final processed Xtest and trained X dimensions do not match.")
   }
-
+  
   ## Calculate GP (Algorithm 2.1. in Rasmussen & Williams)
-  Kss <- kernel(Xtest, Xtest, b = gp$b, kernel_type = gp$kernel_type,
+  Kss <- kernel(Xtest, Xtest, b = gp$b, kernel_type = gp$kernel_type, 
                 period = gp$period_scaled) #K_{**}
-  Ks <- kernel(Xtest, gp$X, b = gp$b, kernel_type = gp$kernel_type,
+  Ks <- kernel(Xtest, gp$X, b = gp$b, kernel_type = gp$kernel_type, 
                period = gp$period_scaled) #K_{*}
-
+  
   # Compute predictive mean
   Ys_mean_scaled <- c(Ks %*% gp$alpha)
   Ys_mean_orig <- Ys_mean_scaled * gp$Y.init.sd + gp$Y.init.mean
-
+  
   # Compute predictive covariance
   v <- solve(t(gp$L), t(Ks))
   f_cov <- Kss - crossprod(v) #cov for target function
@@ -266,7 +348,7 @@ gp_predict <- function(gp, Xtest) {
   # Transform back to original scale
   Ys_cov_orig <- gp$Y.init.sd^2 * Ys_cov_scaled #can be used for prediction interval
   f_cov_orig <- gp$Y.init.sd^2 * f_cov #can be used for confidence interval
-
+  
   results <- list(
     Xtest_scaled = Xtest,
     Xtest = Xtest_init,
@@ -280,7 +362,7 @@ gp_predict <- function(gp, Xtest) {
     b = gp$b,
     s2 = gp$s2
   )
-
+  
   return(results)
 }
 
