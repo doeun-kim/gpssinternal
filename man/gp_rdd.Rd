@@ -8,7 +8,6 @@ gp_rdd(
   X,
   Y,
   cut,
-  covs = NULL,
   alpha = 0.05,
   b = NULL,
   trim = FALSE,
@@ -22,8 +21,6 @@ gp_rdd(
 \item{Y}{Y vector (outcome variable)}
 
 \item{cut}{cut point}
-
-\item{covs}{covariates (optional)}
 
 \item{alpha}{confidence level (default = 0.05)}
 

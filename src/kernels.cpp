@@ -122,11 +122,3 @@ double log_marginal_likelihood_cpp(
 
   return(logLik);
 }
-
-
-
-
-
-
-
-

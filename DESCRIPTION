@@ -15,7 +15,7 @@ URL: http://doeunkim.org/gpssinternal/
 BugReports: https://github.com/doeun-kim/gpssinternal/issues
 Imports:
     kbal,
-    Rcpp (>= 1.0.6),
+    Rcpp (>= 1.0.14),
     Matrix,
     ggplot2
 LinkingTo: Rcpp, RcppArmadillo

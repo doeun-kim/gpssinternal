@@ -290,7 +290,6 @@ gp_predict <- function(gp, Xtest){
 #' @param X forcing variable
 #' @param Y Y vector (outcome variable)
 #' @param cut cut point
-#' @param covs covariates (optional)
 #' @param alpha confidence level (default = 0.05)
 #' @param b bandwidth (default = NULL)
 #' @param trim a logical value indicating whether you want to do an automatic trim at a specific value of trim_k_value (default=FALSE)
@@ -309,24 +308,14 @@ gp_predict <- function(gp, Xtest){
 #' @return \item{tau}{an estimated treatment effect}
 #' \item{se}{the standard error of tau}
 #' @export
-gp_rdd <- function(X, Y, cut, covs=NULL, alpha=0.05, b=NULL, trim=FALSE, trim_k_value=0.1, scale=TRUE){
-
+gp_rdd <- function(X, Y, cut, alpha=0.05, b=NULL,
+                   trim=FALSE, trim_k_value=0.1, scale=TRUE){
   cutpoint <- c(cut, cut)
 
   b_left <- b
   b_right <- b
 
   na.ok <- complete.cases(X) & complete.cases(Y)
-
-  if(!is.null(covs)){
-    na.ok <- na.ok & complete.cases(covs)
-    covs <- as.matrix(covs)[na.ok, , drop = FALSE]
-
-
-    cutpoint <- matrix(c(cut, colMeans(covs)), nrow = 1)
-  }
-
-
   X <- as.matrix(X[na.ok])
   Y <- as.numeric(Y[na.ok])
 
@@ -335,21 +324,9 @@ gp_rdd <- function(X, Y, cut, covs=NULL, alpha=0.05, b=NULL, trim=FALSE, trim_k_
   Y_left <- Y[X<cut]
   Y_right <- Y[X>cut]
 
-  if(!is.null(covs)){
-    covs_left <- covs[X<cut,]
-    covs_right <- covs[X>cut,]
-
-    X_left <- cbind(X_left, covs_left)
-    X_right <- cbind(X_right, covs_right)
-  }
-
-
-
   #trimming: use only X with kernel value <0.1
-  if(isTRUE(trim) & isTRUE(scale)){
+  if(isTRUE(trim) & isTRUE(scale))
     stop("If `trim==TRUE`, scale must be FALSE")
-  }
-
   if(isTRUE(trim)){
     #1 set b automatically using maxvarK
     b_left <- getb_maxvar(X_left)
