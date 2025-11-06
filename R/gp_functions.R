@@ -14,17 +14,19 @@
 #' @export
 gp_optimize <- function(K, Y, optim.tol=0.1) {
 
-  #define the objective function
-  nlml <- function(K, Y, s2){ #b is fixed
-    return(-1*log_marginal_likelihood_cpp(K, Y, s2))
+  # Define the objective function
+  nlml <- function(s2, K, Y) {
+    return(-1 * log_marginal_likelihood_cpp(K, Y, s2))
   }
 
-  #find the optimal s2 (by MLE)
-  #since we always scale y, it is between 0 and 1; is 0.05 good for lower bound?
-  opt <- optimize(nlml, interval=c(0.05, 1), maximum=FALSE, K=K, Y=Y, tol=optim.tol)
-  results <- list(s2opt = opt$minimum, nlml = opt$objective)
+  # Find the optimal s2 (by MLE)
+  # Since we always scale y, it is between 0 and 1; is 0.05 good for lower bound?
+  opt <- optimize(nlml, interval=c(0.05, 1), K=K, Y=Y, maximum=FALSE, tol=optim.tol)
+  results <- list(s2opt = opt$minimum,
+                  nlml = opt$objective)
   return(results)
 }
+
 
 #' gp_train
 #'
@@ -63,129 +65,136 @@ gp_optimize <- function(K, Y, optim.tol=0.1) {
 #' \item{cat_columns}{a character or a numerical vector indicating the location of categorical/binary variables in X}
 #' \item{cat_num}{a numerical vector indicating the location of categorical/binary variables in an expanded version of X}
 #' \item{Xcolnames}{column names of X}
-#' @examples
-#' data(lalonde)
-#' cat_vars <- c("race_ethnicity", "married")
-#' all_vars <- c("age","educ","re74","re75","married", "race_ethnicity")
-#'
-#' X <- lalonde[,all_vars]
-#' Y <- lalonde$re78
-#' D <- lalonde$nsw
-#'
-#' X_train <- X[D==0,]
-#' Y_train <- Y[D==0]
-#' X_test <- X[D == 1,]
-#' Y_test <- Y[D == 1]
-#'
-#' gp_train.out <- gp_train(X = X_train, Y = Y_train, optimize=TRUE, mixed_data = TRUE, cat_columns = cat_vars)
-#' gp_predict.out <- gp_predict(gp_train.out, X_test)
 #' @importFrom stats sd
 #' @importFrom Rcpp sourceCpp
 #'
 #' @export
 gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
-                     scale = TRUE, mixed_data = FALSE, cat_columns = NULL, Xtest = NULL){
-  cat_num <- NULL
+                     scale = TRUE, kernel_type = "gaussian", period = NULL,
+                     mixed_data = FALSE, cat_columns = NULL, Xtest = NULL) {
 
-  ## pre-process outcome Y
+  # Validate kernel_type matches available options
+  kernel_type <- match.arg(kernel_type,
+                           c("gaussian",
+                             "gaussian_linear",
+                             "gaussian_quadratic",
+                             "gaussian_periodic_linear",
+                             "gaussian_periodic_quadratic"))
+
+  # Check if period is required
+  needs_period <- grepl("periodic", kernel_type)
+  if (needs_period && is.null(period)) {
+    stop(sprintf("Error: Period parameter required for kernel type '%s'.", kernel_type))
+  }
+
+  # Pre-process outcome Y
   Y.init <- as.numeric(Y)
   Y.init.mean <- mean(Y.init)
   Y.init.sd <- sd(Y.init)
   Y <- scale(Y, center = Y.init.mean, scale = Y.init.sd)
 
-  ## pre-process covariates X
+  # Pre-process covariates X
   X <- as.matrix(X)
-  X.orig  <- X
+  X.orig <- X
   n <- nrow(X)
   d <- ncol(X)
+
+  #mixed_data processing
   if(mixed_data == TRUE){
     X_mix <- mixed_data_processing(X, cat_columns = cat_columns, Xtest=Xtest)
     X <- X_mix$X
     cat_num <- X_mix$cat_num
   }
-  if(is.null(colnames(X))){
+
+  if (is.null(colnames(X))) {
     colnames(X) <- paste("x", 1:d, sep = "")
   }
-  X.init  <- X
+  X.init <- X
 
-  if (scale == TRUE & mixed_data == FALSE){
+  period_original <- period # Store original period before scaling
+
+  if (scale == TRUE) { # if scale == TRUE
     X.init.mean <- apply(X.init, 2, mean)
     X.init.sd <- apply(X.init, 2, sd)
     if (sum(X.init.sd == 0) | sum(is.na(X.init.sd)) > 0) {
       stop("at least one column in X is a constant, please remove the constant(s)")
     }
     X <- scale(X, center = TRUE, scale = X.init.sd)
-  } else if (scale == TRUE & mixed_data == TRUE){
 
-    allx_cat <- sqrt(0.5)*X[, cat_num, drop= FALSE]
-    X_cont <- X[, -cat_num, drop = FALSE]
-    ### in this case, don't we have to keep both X.init.mean for categorical and continuous??
-    X.init.mean = apply(X_cont, 2, mean)
-    X.init.sd <- apply(X_cont, 2, sd)
-    allx_cont <- scale(X_cont, center = TRUE, scale = X.init.sd)
-    X <- as.matrix(cbind(allx_cat, allx_cont))
-  } else {
+    # Scale period if provided and needed
+    if (!is.null(period) && needs_period) {
+      period_scaled <- period / X.init.sd[1] # Period applies to first column (time variable)
+      #message(sprintf("Period scaled from %.2f to %.4f based on time variable scaling", period, period_scaled))
+    } else {
+      period_scaled <- NULL  # Set to NULL for non-periodic kernels
+    }
+  } else { # if scale == FALSE
     X.init.sd <- 1
     X.init.mean <- 0
+    # Only set period_scaled if using a periodic kernel
+    if (!is.null(period) && needs_period) {
+      period_scaled <- period  # No scaling needed
+    } else {
+      period_scaled <- NULL
+    }
   }
 
-  ## b choice by maximizing variance of K when `b=null`
-  if(is.null(b) & mixed_data == FALSE){
-    #print("Choice of b left null; choosing b to maximize var(K)")
-    b = getb_maxvar(X)
-  } else if (is.null(b) & mixed_data == TRUE){
-    # DK: check this part
-    b = getb_maxvar(X)
-    #b = 2*ncol(X)
+  # Optimize b by maximizing variance of K when `b=null`
+  if (is.null(b)) {
+    b <- getb_maxvar(X, kernel_type, period_scaled)
   }
 
   ## Calculate GP
-  K <- kernel_symmetric(X, b=b)
+  K <- kernel_symmetric(X, b = b, kernel_type = kernel_type, period = period_scaled)
 
-  # optimize s2
-  if (isTRUE(optimize)) { #optimize s2, given b
-    opt <- gp_optimize(K=K, Y=Y)
+  # Optimize s2, given K (with optimized b)
+  if (isTRUE(optimize)) {
+    opt <- gp_optimize(K = K, Y = Y)
     s2 <- opt$s2opt
   } #otherwise, user-specified s2 is given (or default s2)
 
-  ## new (directly use chol2inv to get K^-1): 1.33x faster
   L <- chol(K + diag(s2, nrow(K)))
   K_inv <- Matrix::chol2inv(L)
-  m <- rep(0, nrow(X)) #zero mean prior
-  a <- K_inv %*% (Y - m) #alpha with simplified computation using K^-1
+  m <- rep(0, nrow(X)) # zero mean prior
+  a <- K_inv %*% (Y - m) # alpha with simplified computation using K^-1
   post_mean_scaled <- K %*% a
   post_cov_scaled <- K - K %*% K_inv %*% K
   prior_mean_scaled <- m
 
-
-  #rescale Y to original
-  post_mean_orig <- post_mean_scaled*Y.init.sd + Y.init.mean
+  # Rescale to original
+  post_mean_orig <- post_mean_scaled * Y.init.sd + Y.init.mean
   post_cov_orig <- Y.init.sd^2 * post_cov_scaled
 
-  results <- list(post_mean_scaled = post_mean_scaled,
-                  post_mean_orig = post_mean_orig,
-                  post_cov_scaled = post_cov_scaled,
-                  post_cov_orig = post_cov_orig,
-
-                  prior_mean_scaled = prior_mean_scaled,
-                  X.orig = X.orig,
-                  X.init = X.init,
-                  X.init.mean = X.init.mean,
-                  X.init.sd = X.init.sd,
-                  Y.init.mean = Y.init.mean,
-                  Y.init.sd = Y.init.sd,
-                  K = K,
-                  Y = Y,
-                  X = X,
-                  b = b,
-                  s2 = s2,
-                  alpha=c(a),
-                  L = L,
-                  mixed_data = mixed_data,
-                  cat_columns = cat_columns,
-                  cat_num = cat_num,
-                  Xcolnames = colnames(X))
-
+  results <- list(
+    # Data
+    X.orig = X.orig,
+    X.init = X.init,
+    X.init.mean = X.init.mean,
+    X.init.sd = X.init.sd,
+    Y.init.mean = Y.init.mean,
+    Y.init.sd = Y.init.sd,
+    Y = Y,
+    X = X,
+    # Parameters
+    b = b,
+    s2 = s2,
+    kernel_type = kernel_type,
+    period_original = period_original,
+    period_scaled = period_scaled,
+    # Kernel and posterior
+    K = K,
+    L = L,
+    alpha = as.vector(a),
+    post_mean_scaled = post_mean_scaled,
+    post_mean_orig = post_mean_orig,
+    post_cov_scaled = post_cov_scaled,
+    post_cov_orig = post_cov_orig,
+    prior_mean_scaled = prior_mean_scaled,
+    mixed_data = mixed_data,
+    cat_columns = cat_columns,
+    scale = scale,
+    Xcolnames = colnames(X)
+  )
   return(results)
 }
 
@@ -195,22 +204,6 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
 #'
 #' @param gp a list-form object obtained from gp_train()
 #' @param Xtest a data frame or a matrix of testing data set
-#' @examples
-#' data(lalonde)
-#' cat_vars <- c("race_ethnicity", "married")
-#' all_vars <- c("age","educ","re74","re75","married", "race_ethnicity")
-#'
-#' X <- lalonde[,all_vars]
-#' Y <- lalonde$re78
-#' D <- lalonde$nsw
-#'
-#' X_train <- X[D==0,]
-#' Y_train <- Y[D==0]
-#' X_test <- X[D == 1,]
-#' Y_test <- Y[D == 1]
-#'
-#' gp_train.out <- gp_train(X = X_train, Y = Y_train, optimize=TRUE, mixed_data = TRUE, cat_columns = cat_vars)
-#' gp_predict.out <- gp_predict(gp_train.out, X_test)
 #' @importFrom Rcpp sourceCpp
 #' @return \item{Xtest_scaled}{testing data in a scaled form}
 #' \item{Xtest}{the original testing data set}
@@ -222,7 +215,8 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
 #' \item{b}{the bandwidth value obtained from gp_train()}
 #' \item{s2}{the s2 value obtained from gp_train()}
 #' @export
-gp_predict <- function(gp, Xtest){
+
+gp_predict <- function(gp, Xtest) {
   mixed_data <- gp$mixed_data
   Xtest_init <- as.matrix(Xtest)
 
@@ -256,32 +250,40 @@ gp_predict <- function(gp, Xtest){
   }
 
   ## Calculate GP (Algorithm 2.1. in Rasmussen & Williams)
-  Kss <- kernel(Xtest, Xtest, b=gp$b) #K_{**}
-  Ks <- kernel(Xtest, gp$X, b=gp$b)
+  Kss <- kernel(Xtest, Xtest, b = gp$b, kernel_type = gp$kernel_type,
+                period = gp$period_scaled) #K_{**}
+  Ks <- kernel(Xtest, gp$X, b = gp$b, kernel_type = gp$kernel_type,
+               period = gp$period_scaled) #K_{*}
 
+  # Compute predictive mean
   Ys_mean_scaled <- c(Ks %*% gp$alpha)
-  Ys_mean_orig = Ys_mean_scaled * gp$Y.init.sd + gp$Y.init.mean
+  Ys_mean_orig <- Ys_mean_scaled * gp$Y.init.sd + gp$Y.init.mean
 
-  # we add s2*I to cov(f*) to compute cov(y*)
-  f_cov <- solve(t(gp$L), t(Ks))
-  f_cov <- Kss - crossprod(f_cov) #cov for target function
+  # Compute predictive covariance
+  v <- solve(t(gp$L), t(Ks))
+  f_cov <- Kss - crossprod(v) #cov for target function
   Ys_cov_scaled <- f_cov + diag(gp$s2, nrow(f_cov)) #cov for new observation
+  # Transform back to original scale
   Ys_cov_orig <- gp$Y.init.sd^2 * Ys_cov_scaled #can be used for prediction interval
   f_cov_orig <- gp$Y.init.sd^2 * f_cov #can be used for confidence interval
 
-  results <- list(Xtest_scaled = Xtest,
-                  Xtest = Xtest_init,
-                  #Ks = Ks, Kss = Kss,
-                  Ys_mean_scaled = Ys_mean_scaled,
-                  Ys_mean_orig = Ys_mean_orig,
-                  Ys_cov_scaled = Ys_cov_scaled,
-                  Ys_cov_orig = Ys_cov_orig,
-                  f_cov_orig = f_cov_orig,
-                  f_cov = f_cov,
-                  b = gp$b,
-                  s2 = gp$s2)
+  results <- list(
+    Xtest_scaled = Xtest,
+    Xtest = Xtest_init,
+    #Ks = Ks, Kss = Kss,
+    Ys_mean_scaled = Ys_mean_scaled,
+    Ys_mean_orig = Ys_mean_orig,
+    Ys_cov_scaled = Ys_cov_scaled,
+    Ys_cov_orig = Ys_cov_orig,
+    f_cov_orig = f_cov_orig,
+    f_cov = f_cov,
+    b = gp$b,
+    s2 = gp$s2
+  )
+
   return(results)
 }
+
 
 #' gp_rdd
 #'
