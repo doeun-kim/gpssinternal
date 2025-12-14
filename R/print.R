@@ -1,7 +1,6 @@
 #' print method for objects of class gpss
 #'
 #' @param x gpss object
-#' @param ... additional arguments (not used)
 #' @examples
 #' library(gpssinternal)
 #' data(lalonde)
