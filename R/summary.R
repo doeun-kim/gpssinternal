@@ -1,7 +1,6 @@
 #' summary method for objects of class gpss
 #'
 #' @param object gpss object
-#' @param ... additional arguments (not used)
 #' @examples
 #' library(gpssinternal)
 #' data(lalonde)
