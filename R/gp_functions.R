@@ -38,8 +38,11 @@ gp_optimize <- function(K, Y, optim.tol=0.1) {
 #' @param s2 noise or a fraction of Y not explained by X (default = 0.3)
 #' @param optimize a logical value to indicate whether an automatic optimized value of S2 should be used. If FALSE, users must define s2. (default = FALSE)
 #' @param scale a logical value to indicate whether covariates should be scaled. (dafault = TRUE)
+#' @param kernel_type a character value indicating the kernel type (default = "gaussian")
+#' @param period a numeric value for the period parameter, required for periodic kernels (default = NULL)
+#' @param time_col a character or numeric value indicating which column is the time variable. If specified, this column will be moved to the first position for correct period scaling in periodic kernels. (default = NULL)
 #' @param mixed_data a logical value to indicate whether the covariates contain a categorical/binary variable (default = FALSE)
-#' @param cat_columns a character or a numerical vector indicating categorical variables (default = NULL)
+#' @param cat_columns a character or a numerical vector indicating categorical variables. Must be character (not numeric) when time_col is specified. (default = NULL)
 #' @param Xtest a data frame or a matrix of testing covariates. This is necessary when a non-overlapping categorical value exists between training and testing data sets. (default = NULL)
 #'
 #' @return \item{post_mean_scaled}{posterior distribution of Y in a scaled form}
@@ -64,6 +67,7 @@ gp_optimize <- function(K, Y, optim.tol=0.1) {
 #' \item{mixed_data}{a logical value indicating whether X contains a categorical/binary variable}
 #' \item{cat_columns}{a character or a numerical vector indicating the location of categorical/binary variables in X}
 #' \item{cat_num}{a numerical vector indicating the location of categorical/binary variables in an expanded version of X}
+#' \item{time_col}{the time column specification used (or NULL if not specified)}
 #' \item{Xcolnames}{column names of X}
 #' @importFrom stats sd
 #' @importFrom Rcpp sourceCpp
@@ -71,6 +75,7 @@ gp_optimize <- function(K, Y, optim.tol=0.1) {
 #' @export
 gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE, 
                      scale = TRUE, kernel_type = "gaussian", period = NULL,
+                     time_col = NULL,
                      mixed_data = FALSE, cat_columns = NULL, Xtest = NULL) {
   
   # Validate kernel_type matches available options
@@ -87,17 +92,49 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
     stop(sprintf("Error: Period parameter required for kernel type '%s'.", kernel_type))
   }
   
+  # Pre-process covariates X
+  X <- as.matrix(X)
+  
+  # Reorder columns if time_col is specified (move time column to first position)
+  if (!is.null(time_col)) {
+    # Check for conflict with numeric cat_columns
+    if (!is.null(cat_columns) && is.numeric(cat_columns)) {
+      stop("When using 'time_col', please specify 'cat_columns' by column name (character) rather than index (numeric).")
+    }
+    
+    # Find the time column index
+    if (is.character(time_col)) {
+      time_idx <- which(colnames(X) == time_col)
+      if (length(time_idx) == 0) {
+        stop(sprintf("Specified time_col '%s' not found in X.", time_col))
+      }
+    } else if (is.numeric(time_col)) {
+      if (time_col < 1 || time_col > ncol(X)) {
+        stop(sprintf("Specified time_col index %d is out of bounds (X has %d columns).", time_col, ncol(X)))
+      }
+      time_idx <- time_col
+    } else {
+      stop("time_col must be a column name (character) or column index (numeric).")
+    }
+    
+    # Reorder X so time column is first
+    other_cols <- setdiff(1:ncol(X), time_idx)
+    X <- X[, c(time_idx, other_cols), drop = FALSE]
+    
+    # Also reorder Xtest if provided
+    if (!is.null(Xtest)) {
+      Xtest <- as.matrix(Xtest)
+      Xtest <- Xtest[, c(time_idx, other_cols), drop = FALSE]
+    }
+  }
+  
+  X.orig <- X
+  
   # Pre-process outcome Y
   Y.init <- as.numeric(Y)
   Y.init.mean <- mean(Y.init)
   Y.init.sd <- sd(Y.init)
   Y <- scale(Y, center = Y.init.mean, scale = Y.init.sd)
-  
-  # Pre-process covariates X
-  X <- as.matrix(X)
-  X.orig <- X
-  #n <- nrow(X)
-  #d <- ncol(X)
   
   if (!is.null(Xtest)) {
     Xtest.orig <- as.matrix(Xtest) # Save original *unprocessed* Xtest
@@ -162,7 +199,7 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
     }
     
     # Scale period if provided and needed
-    #### time variable should be the first column of the data! ####
+    # Uses first continuous column (guaranteed to be time if time_col was specified)
     if (!is.null(period) && needs_period) {
       first_cont_col_idx <- NULL
       if (mixed_data == TRUE) {
@@ -224,10 +261,10 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
   
   results <- list(
     # Data
-    X.orig = X.orig, # unprocessed original X
-    X.init = X.init, # mean vector (cont only)
-    X.init.mean = X.init.mean, # SD vectors (cont only)
-    X.init.sd = X.init.sd,
+    X.orig = X.orig, # unprocessed original X (reordered if time_col specified)
+    X.init = X.init, # processed, unscaled X
+    X.init.mean = X.init.mean, # mean vector (cont only)
+    X.init.sd = X.init.sd, # SD vectors (cont only)
     Y.init.mean = Y.init.mean,
     Y.init.sd = Y.init.sd,
     Y = Y,
@@ -253,6 +290,7 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
     cat_num_processed = cat_num_processed, # processed cat indices
     cont_num_processed = cont_num_processed, # processed cont indices
     scale = scale,
+    time_col = time_col, # store time_col for gp_predict
     Xcolnames = colnames(X)
   )
   return(results)
@@ -279,6 +317,20 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
 gp_predict <- function(gp, Xtest) {
   mixed_data <- gp$mixed_data
   Xtest_init <- as.matrix(Xtest) #unprocessed test data
+  
+  # Reorder columns if time_col was specified during training
+  if (!is.null(gp$time_col)) {
+    if (is.character(gp$time_col)) {
+      time_idx <- which(colnames(Xtest_init) == gp$time_col)
+      if (length(time_idx) == 0) {
+        stop(sprintf("time_col '%s' not found in Xtest.", gp$time_col))
+      }
+    } else {
+      time_idx <- gp$time_col
+    }
+    other_cols <- setdiff(1:ncol(Xtest_init), time_idx)
+    Xtest_init <- Xtest_init[, c(time_idx, other_cols), drop = FALSE]
+  }
   
   if(!isTRUE(mixed_data)){
     Xtest <- sweep(Xtest_init, MARGIN=2, gp$X.init.mean, FUN = "-")
