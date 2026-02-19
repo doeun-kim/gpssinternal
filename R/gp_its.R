@@ -195,6 +195,7 @@ gp_its <- function(y, dates, date_treat,
       tau_cum_lwr = tau_cum - z_crit * tau_cum_se, tau_cum_upr = tau_cum + z_crit * tau_cum_se,
       tau_avg_lwr = tau_avg - z_crit * tau_avg_se, tau_avg_upr = tau_avg + z_crit * tau_avg_se
     ),
+    post_cov = post_cov,
     # Placebo
     placebo_estimates = placebo_estimates,
     placebo_summary = placebo_summary,
