@@ -169,3 +169,54 @@ gp_rdd_plot <- function(gp_rdd_res,
 
   return(gg)
 }
+
+
+#' Print method for gp_rdd objects
+#' @keywords internal
+#' @noRd
+print.gp_rdd <- function(x, ...) {
+  cat("GP-RDD Model\n")
+  cat(strrep("-", 40), "\n")
+  cat(sprintf("Cut point: %.2f\n", x$cut))
+  cat(sprintf("Trimmed?: %s\n", x$trim))
+  cat(sprintf("Tau: %.3f\n", x$tau))
+  cat(sprintf("Confidence Interval: [%.3f, %.3f]\n", x$ci[1], x$ci[2]))
+  cat(sprintf("No. of observations on the left: %.0f\n", x$n_left))
+  cat(sprintf("No. of observations on the right: %.0f\n", x$n_right))
+
+  invisible(x)
+}
+
+#' Summary method for gp_rdd objects
+#' @keywords internal
+#' @noRd
+summary.gp_rdd <- function(x, ...) {
+  cat("GP-RDD Model Summary\n")
+  cat(strrep("=", 50), "\n\n")
+
+  cat("DATA\n")
+  cat(sprintf("  Total observations: %d\n", length(x$Y)))
+  cat(sprintf("  Observations left of cutoff: %d\n", x$n_left))
+  cat(sprintf("  Observations right of cutoff: %d\n", x$n_right))
+  cat(sprintf("  Cut point: %.3f\n", x$cut))
+  cat(sprintf("  Trimmed?: %s\n", x$trim))
+  if (!is.null(x$trim_at_left)) {
+    cat(sprintf("  Trim left at: %.3f\n", x$trim_at_left))
+    cat(sprintf("  Trim right at: %.3f\n", x$trim_at_right))
+  }
+
+  cat("\nMODEL\n")
+  cat(sprintf("  Bandwidth left (b_left): %.4f\n", x$b_left))
+  cat(sprintf("  Bandwidth right (b_right): %.4f\n", x$b_right))
+  cat(sprintf("  Noise variance left (s2_left): %.4f\n", x$s2_left))
+  cat(sprintf("  Noise variance right (s2_right): %.4f\n", x$s2_right))
+
+  cat("\nTREATMENT EFFECT\n")
+  cat(sprintf("  Predicted left at cutoff: %.3f\n", x$pred_l))
+  cat(sprintf("  Predicted right at cutoff: %.3f\n", x$pred_r))
+  cat(sprintf("  Tau: %.3f\n", x$tau))
+  cat(sprintf("  Standard error: %.3f\n", x$se))
+  cat(sprintf("  Confidence Interval: [%.3f, %.3f]\n", x$ci[1], x$ci[2]))
+
+  invisible(x)
+}
