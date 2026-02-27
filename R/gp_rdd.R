@@ -1,6 +1,13 @@
 #' gp_rdd
 #'
-#' to perform RD using GP functions
+#' This function implements a regression discontinuity (RD) design
+#' using Gaussian Process (GP) regression on each side of the cutoff.
+#' Separate GP models are estimated for observations below and above the
+#' threshold, allowing for flexible and fully nonparametric functional forms.
+#' The treatment effect is computed as the difference between the predicted
+#' conditional means at the cutoff from the right and left limits.
+#' Standard errors and confidence intervals are constructed using the
+#' posterior predictive variance from the two independently fitted GPs.
 #'
 #' @param X forcing variable
 #' @param Y Y vector (outcome variable)
@@ -81,7 +88,8 @@ gp_rdd <- function(X, Y, cut, alpha=0.05, b=NULL,
                   Y = Y,
                   gp_train_l = gp_train_l,
                   gp_train_r = gp_train_r,
-                  cut = cut)
+                  cut = cut,
+                  alpha = alpha)
 
   if(trim==TRUE){
     results <- append(results,
@@ -109,6 +117,8 @@ gp_rdd <- function(X, Y, cut, alpha=0.05, b=NULL,
 #' gp_rdd_plot(gp_rdd.out) +
 #'  geom_vline(xintercept = cut, lty="dashed")
 #' @importFrom ggplot2 ggplot geom_point geom_line geom_ribbon theme_minimal aes
+#' @importFrom rlang .data
+#' @importFrom stats as.formula formula model.frame model.response
 #' @return \item{gg}{an RD ggplot}
 #' @export
 gp_rdd_plot <- function(gp_rdd_res,
@@ -129,29 +139,31 @@ gp_rdd_plot <- function(gp_rdd_res,
 
   left_side <- data.frame(x = Xtest_left,
                           y = gp_pred_l$Ys_mean_orig,
-                          l_lwr = gp_pred_l$Ys_mean_orig - 1.96*l_se,
-                          l_upr = gp_pred_l$Ys_mean_orig + 1.96*l_se
+                          l_lwr = gp_pred_l$Ys_mean_orig - qnorm(1-gp_rdd_res$alpha/2)*l_se,
+                          l_upr = gp_pred_l$Ys_mean_orig + qnorm(1-gp_rdd_res$alpha/2)*l_se
   )
 
   right_side <- data.frame(x = Xtest_right,
                            y = gp_pred_r$Ys_mean_orig,
-                           r_lwr = gp_pred_r$Ys_mean_orig - 1.96*r_se,
-                           r_upr = gp_pred_r$Ys_mean_orig + 1.96*r_se
+                           r_lwr = gp_pred_r$Ys_mean_orig - qnorm(1-gp_rdd_res$alpha/2)*r_se,
+                           r_upr = gp_pred_r$Ys_mean_orig + qnorm(1-gp_rdd_res$alpha/2)*r_se
   )
 
   gg <- ggplot2::ggplot() +
     ggplot2::geom_point(data = ggdt,
-                        ggplot2::aes(X, Y), alpha = 0.5) +
+                        ggplot2::aes(x = .data$X, y = .data$Y),
+                        alpha = 0.5) +
     ggplot2::geom_line(data = left_side,
-                       ggplot2::aes(x, y), col = l_col) +
+                       ggplot2::aes(x = .data$x, y = .data$y),
+                       col = l_col) +
     ggplot2::geom_ribbon(data = left_side,
-                         ggplot2::aes(x, ymin = l_lwr, ymax = l_upr),
+                         ggplot2::aes(x = .data$x, ymin = .data$l_lwr, ymax = .data$l_upr),
                          col = NA, alpha = 0.3, fill = l_col) +
     ggplot2::geom_line(data = right_side,
-                       ggplot2::aes(x, y),
+                       ggplot2::aes(x = .data$x, y = .data$y),
                        col = r_col) +
     ggplot2::geom_ribbon(data = right_side,
-                         ggplot2::aes(x, ymin = r_lwr, ymax = r_upr),
+                         ggplot2::aes(x = .data$x, ymin = .data$r_lwr, ymax = .data$r_upr),
                          col = NA, alpha = 0.3, fill = r_col) +
     ggplot2::theme_minimal()
 

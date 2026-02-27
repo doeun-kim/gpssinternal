@@ -11,6 +11,8 @@ formula_to_design <- function(formula, data) {
 
 #' Train a Gaussian Process Models
 #'
+#' @param formula an object of class "formula": a symbolic description of the model to be fitted
+#' @param data a data frame containing the variables in the model.
 #' @inheritParams gp_train
 #' @inherit gp_train return
 #'

@@ -10,7 +10,8 @@
   type = "response",
   format = "default",
   interval = "confidence",
-  level = 0.95
+  level = 0.95,
+  ...
 )
 }
 \arguments{
@@ -25,6 +26,8 @@
 \item{interval}{"prediction" or "confidence"}
 
 \item{level}{a numerical value between 0 and 1}
+
+\item{...}{additional arguments (not used)}
 }
 \description{
 predict method for \code{gpss} objects

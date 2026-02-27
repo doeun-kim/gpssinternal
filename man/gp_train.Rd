@@ -13,6 +13,7 @@ gp_train(
   scale = TRUE,
   kernel_type = "gaussian",
   period = NULL,
+  time_col = NULL,
   mixed_data = FALSE,
   cat_columns = NULL,
   Xtest = NULL
@@ -31,9 +32,15 @@ gp_train(
 
 \item{scale}{a logical value to indicate whether covariates should be scaled. (dafault = TRUE)}
 
+\item{kernel_type}{a character value indicating the kernel type (default = "gaussian")}
+
+\item{period}{a numeric value for the period parameter, required for periodic kernels (default = NULL)}
+
+\item{time_col}{a character or numeric value indicating which column is the time variable. If specified, this column will be moved to the first position for correct period scaling in periodic kernels. (default = NULL)}
+
 \item{mixed_data}{a logical value to indicate whether the covariates contain a categorical/binary variable (default = FALSE)}
 
-\item{cat_columns}{a character or a numerical vector indicating categorical variables (default = NULL)}
+\item{cat_columns}{a character or a numerical vector indicating categorical variables. Must be character (not numeric) when time_col is specified. (default = NULL)}
 
 \item{Xtest}{a data frame or a matrix of testing covariates. This is necessary when a non-overlapping categorical value exists between training and testing data sets. (default = NULL)}
 }
@@ -60,6 +67,7 @@ gp_train(
 \item{mixed_data}{a logical value indicating whether X contains a categorical/binary variable}
 \item{cat_columns}{a character or a numerical vector indicating the location of categorical/binary variables in X}
 \item{cat_num}{a numerical vector indicating the location of categorical/binary variables in an expanded version of X}
+\item{time_col}{the time column specification used (or NULL if not specified)}
 \item{Xcolnames}{column names of X}
 }
 \description{

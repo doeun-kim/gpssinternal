@@ -7,6 +7,10 @@
 gpss(formula, data, b = NULL, s2 = 0.3, optimize = FALSE, scale = TRUE)
 }
 \arguments{
+\item{formula}{an object of class "formula": a symbolic description of the model to be fitted}
+
+\item{data}{a data frame containing the variables in the model.}
+
 \item{b}{bandwidth (default = NULL)}
 
 \item{s2}{noise or a fraction of Y not explained by X (default = 0.3)}
@@ -38,6 +42,7 @@ gpss(formula, data, b = NULL, s2 = 0.3, optimize = FALSE, scale = TRUE)
 \item{mixed_data}{a logical value indicating whether X contains a categorical/binary variable}
 \item{cat_columns}{a character or a numerical vector indicating the location of categorical/binary variables in X}
 \item{cat_num}{a numerical vector indicating the location of categorical/binary variables in an expanded version of X}
+\item{time_col}{the time column specification used (or NULL if not specified)}
 \item{Xcolnames}{column names of X}
 }
 \description{

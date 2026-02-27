@@ -7,6 +7,7 @@
 #' @param interval "prediction" or "confidence"
 #' @param level a numerical value between 0 and 1
 #' @param ... additional arguments (not used)
+#' @inheritParams stats::predict
 #' @examples
 #' library(gpssinternal)
 #' data(lalonde)
@@ -21,55 +22,55 @@
 #' p <- predict(mod, newdata = dat_test)
 #' p_confidence99 <- predict(mod, newdata = dat_test, interval = "confidence", level = 0.99)
 #' @export
-predict.gpss <- function(object, newdata = NULL, type = "response", 
-                         format = "default", interval = "confidence", 
+predict.gpss <- function(object, newdata = NULL, type = "response",
+                         format = "default", interval = "confidence",
                          level = 0.95, ...) {
-  
+
  # Input validation
   if (!isTRUE(format %in% c("default", "rvar"))) {
     stop('`format` must be "default" or "rvar".', call. = FALSE)
   }
-  
+
   if (!isTRUE(interval %in% c("prediction", "confidence"))) {
     stop('`interval` must be "prediction" or "confidence".', call. = FALSE)
   }
-  
+
   if (!isTRUE(level < 1 && level > 0)) {
     stop('`level` must be a numerical value between 0 and 1.', call. = FALSE)
   }
-  
+
   type <- match.arg(type, c("response", "scaled"))
-  
+
   if (!inherits(newdata, "data.frame")) {
     stop("`newdata` must be a data frame.", call. = FALSE)
   }
-  
+
   if (!identical(type, "response") && identical(format, "rvar")) {
     stop('`format="rvar"` is only available with `type="response"`.', call. = FALSE)
   }
-  
+
   # Get formula and create design matrix
   fo <- attr(object, "formula")
   if (!inherits(fo, "formula")) {
-    stop("The `gpss` object must have been created using the formula interface of the `gpss()` function.", 
+    stop("The `gpss` object must have been created using the formula interface of the `gpss()` function.",
          call. = FALSE)
   }
-  
+
   # Drop the left-hand side
   fo <- as.formula(paste("~", deparse(formula(fo)[[3]])))
   X <- model.matrix(fo, newdata)
-  
+
   # Check for missing columns
   miss <- setdiff(colnames(object$X), colnames(X))
   if (length(miss) > 0) {
-    stop(sprintf("Missing columns in the design matrix: %s", paste(miss, collapse = ", ")), 
+    stop(sprintf("Missing columns in the design matrix: %s", paste(miss, collapse = ", ")),
          call. = FALSE)
   }
   X <- X[, colnames(object$X), drop = FALSE]
-  
+
   # Get predictions
   out <- gp_predict(object, Xtest = X)
-  
+
   # Select output type
   if (type == "response") {
     fit <- out$Ys_mean_orig
@@ -78,7 +79,7 @@ predict.gpss <- function(object, newdata = NULL, type = "response",
     fit <- out$Ys_mean_scaled
     gp_cov <- if (interval == "prediction") out$Ys_cov_scaled else out$f_cov
   }
-  
+
   # Format output
   if (format == "rvar") {
     if (!requireNamespace("posterior", quietly = TRUE)) {
@@ -87,7 +88,7 @@ predict.gpss <- function(object, newdata = NULL, type = "response",
     if (!requireNamespace("MASS", quietly = TRUE)) {
       stop("Please install the `MASS` package.", call. = FALSE)
     }
-    
+
     rv <- MASS::mvrnorm(1e3, fit, gp_cov)
     out <- newdata
     out$rvar <- posterior::rvar(rv)
@@ -98,6 +99,6 @@ predict.gpss <- function(object, newdata = NULL, type = "response",
     upr <- fit + z * sqrt(yvar)
     out <- cbind(fit = fit, lwr = lwr, upr = upr)
   }
-  
+
   return(out)
 }

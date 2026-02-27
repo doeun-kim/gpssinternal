@@ -10,7 +10,7 @@
 #
 #' @importFrom stats model.matrix contrasts
 #' @keywords internal
-#' @export
+#' @noRd
 one_hot <- function(data) {
   onehot_data <- data.frame(lapply(data.frame(data),as.factor))
   onehot_data <- model.matrix(~ ., onehot_data,
@@ -32,7 +32,7 @@ one_hot <- function(data) {
 #
 #' @return data frame containing expanded form of categorical variables
 #' @keywords internal
-#' @export
+#' @noRd
 mixed_data_processing <- function(X, cat_columns = NULL, Xtest = NULL
 ) {
 
@@ -116,7 +116,7 @@ mixed_data_processing <- function(X, cat_columns = NULL, Xtest = NULL
 #
 #' @importFrom kbal b_maxvarK
 #' @keywords internal
-#' @export
+#' @noRd
 getb_maxvar <- function(x, kernel_type = "gaussian", period = NULL, maxsearch_b = 2000) {
   if (!is.numeric(maxsearch_b) || length(maxsearch_b) != 1) {
     stop("'maxsearch_b' must be a single numeric value.")
@@ -143,7 +143,7 @@ getb_maxvar <- function(x, kernel_type = "gaussian", period = NULL, maxsearch_b 
   var_K <- function(b) {
     tryCatch({
       K <- kernel_symmetric(X, b, kernel_type, period)
-      var(K[lower.tri(K)])
+      stats::var(K[lower.tri(K)])
     }, error = function(e) {
       return(0)  # Return 0 variance if computation fails
     })
@@ -165,7 +165,7 @@ getb_maxvar <- function(x, kernel_type = "gaussian", period = NULL, maxsearch_b 
 #
 #' @importFrom Rcpp sourceCpp
 #' @keywords internal
-#' @export
+#' @noRd
 kernel <- function(x1, x2, b, kernel_type = "gaussian", period = NULL) {
   # Input validation
   if (missing(b) || is.null(b) || !is.numeric(b) || b <= 0) {
@@ -207,7 +207,7 @@ kernel <- function(x1, x2, b, kernel_type = "gaussian", period = NULL) {
 #
 #' @importFrom Rcpp sourceCpp
 #' @keywords internal
-#' @export
+#' @noRd
 kernel_symmetric <- function(x, b, kernel_type = "gaussian", period = NULL) {
   # Input validation
   if (missing(b) || is.null(b) || !is.numeric(b) || b <= 0) {
@@ -244,9 +244,9 @@ kernel_symmetric <- function(x, b, kernel_type = "gaussian", period = NULL) {
 #' @param min_obs
 #' @return null
 #
-#' @importFrom stats fft
+#' @importFrom stats fft residulas lm var
 #' @keywords internal
-#' @export
+#' @noRd
 estimate_period <- function(y, min_obs=7) {
   n <- length(y)
   if (n < min_obs) {
@@ -258,8 +258,8 @@ estimate_period <- function(y, min_obs=7) {
   # Detrend the data
   tryCatch({
     time_index <- seq_along(y)
-    trend_fit <- lm(y ~ time_index)
-    y_detrended <- residuals(trend_fit)
+    trend_fit <- stats::lm(y ~ time_index)
+    y_detrended <- stats::residuals(trend_fit)
   }, error = function(e) {
     warning("Warning: Could not detrend data. Using raw values.")
     y_detrended <- y - mean(y)

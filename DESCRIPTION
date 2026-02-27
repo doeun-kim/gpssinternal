@@ -16,8 +16,10 @@ BugReports: https://github.com/doeun-kim/gpssinternal/issues
 Imports:
     kbal,
     Rcpp (>= 1.0.14),
+    MASS,
     Matrix,
-    ggplot2
+    ggplot2,
+    rlang
 LinkingTo: Rcpp, RcppArmadillo
 Remotes: 
     chadhazlett/KBAL
@@ -25,5 +27,6 @@ Depends:
     R (>= 2.10)
 LazyData: true
 Suggests: 
+    mvnfast,
     posterior,
     rmarkdown
