@@ -1,0 +1,166 @@
+---
+title: "Prior mean demo"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+# devtools::load_all(".")   # use this if package is not installed
+library(gpssinternal)
+library(ggplot2)
+```
+
+## Setup
+
+True CEF: **f(x) = x + sin(3x)**, sampled at n = 40 points with Gaussian noise
+(sd = 0.5) over x ∈ [−3, 3].
+
+We compare three GP fits:
+
+| Model         | prior_mean at training  | prior_mean at test    |
+|---------------|-------------------------|-----------------------|
+| No prior      | none                    | none                  |
+| Good prior    | µ(x) = x               | µ(x) = x             |
+| Useless prior | µ(x) = 5               | µ(x) = 5             |
+
+The **good prior** (µ = x) is what you might get from a simple linear model trained
+on a larger dataset — it captures the trend but misses the oscillation.
+The GP only needs to learn the residuals `sin(3x)`, a smoother and smaller-amplitude
+signal than the full Y.
+
+The **useless prior** (µ = 5) is a flat constant far from the truth.
+Residuals are essentially `Y − 5`, which is as hard to learn as Y itself but
+shifted, giving the GP nothing useful to work with.
+
+```{r data}
+set.seed(42)
+n       <- 40
+X_train <- sort(runif(n, -3, 3))
+f_true  <- function(x) x + sin(3 * x)
+Y_train <- f_true(X_train) + rnorm(n, sd = 0.5)
+
+X_test      <- seq(-3, 3, length.out = 300)
+f_test_true <- f_true(X_test)
+
+# Prior means at training and test points
+prior_good_train <- X_train          # linear trend — good guess
+prior_good_test  <- X_test
+
+prior_bad_train  <- rep(5, n)        # flat constant — useless guess
+prior_bad_test   <- rep(5, length(X_test))
+```
+
+```{r fit}
+gp_none <- gp_train(matrix(X_train), Y_train, optimize = TRUE)
+gp_good <- gp_train(matrix(X_train), Y_train, optimize = TRUE,
+                    prior_mean = prior_good_train)
+gp_bad  <- gp_train(matrix(X_train), Y_train, optimize = TRUE,
+                    prior_mean = prior_bad_train)
+```
+
+```{r predict}
+pred_none <- gp_predict(gp_none, matrix(X_test))
+pred_good <- gp_predict(gp_good, matrix(X_test), prior_mean = prior_good_test)
+pred_bad  <- gp_predict(gp_bad,  matrix(X_test), prior_mean = prior_bad_test)
+```
+
+```{r plot, fig.width=9, fig.height=5}
+z <- qnorm(0.975)   # 95% CI
+
+build_df <- function(pred, label) {
+  se <- sqrt(diag(pred$f_cov_orig))
+  data.frame(
+    x     = X_test,
+    fit   = pred$Ys_mean_orig,
+    lwr   = pred$Ys_mean_orig - z * se,
+    upr   = pred$Ys_mean_orig + z * se,
+    model = label
+  )
+}
+
+df_all <- rbind(
+  build_df(pred_none, "No prior"),
+  build_df(pred_good, "Good prior  (µ = x)"),
+  build_df(pred_bad,  "Useless prior  (µ = 5)")
+)
+
+cols <- c(
+  "No prior"              = "steelblue",
+  "Good prior  (µ = x)"  = "forestgreen",
+  "Useless prior  (µ = 5)" = "tomato"
+)
+
+train_df <- data.frame(x = X_train, y = Y_train)
+true_df  <- data.frame(x = X_test,  y = f_test_true)
+
+ggplot() +
+  geom_ribbon(data = df_all,
+              aes(x, ymin = lwr, ymax = upr, fill = model),
+              alpha = 0.20) +
+  geom_line(data = df_all,
+            aes(x, fit, col = model), linewidth = 0.9) +
+  geom_line(data = true_df,
+            aes(x, y), lty = "dashed", col = "black", linewidth = 0.8) +
+  geom_point(data = train_df,
+             aes(x, y), alpha = 0.5, size = 1.5) +
+  scale_color_manual(values = cols) +
+  scale_fill_manual(values  = cols) +
+  labs(
+    title    = "GP posterior mean and 95% CI under three prior-mean choices",
+    subtitle = "Dashed = true CEF,  points = training data",
+    x = "X", y = "Y", col = NULL, fill = NULL
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+## What changes under the hood
+
+```{r params}
+params <- data.frame(
+  Model            = c("No prior", "Good prior", "Useless prior"),
+  `Y residual SD`  = round(c(gp_none$Y.init.sd, gp_good$Y.init.sd, gp_bad$Y.init.sd), 3),
+  `s2 (optimised)` = round(c(gp_none$s2,        gp_good$s2,        gp_bad$s2),        4),
+  `b (bandwidth)`  = round(c(gp_none$b,          gp_good$b,         gp_bad$b),         3),
+  check.names = FALSE
+)
+knitr::kable(params, align = "lrrr",
+             caption = paste(
+               "Y residual SD = sd(Y - prior_mean) used for internal scaling.",
+               "A good prior shrinks residual variance, letting the GP",
+               "fit a tighter signal with less noise."
+             ))
+```
+
+The key quantity is **Y residual SD**: the standard deviation of what the GP
+actually fits.
+
+- **No prior**: the GP fits raw Y — high residual SD.
+- **Good prior (µ = x)**: residuals are `sin(3x) + noise`, which have lower
+  amplitude and a cleaner length scale. The GP converges faster and the
+  posterior CIs are narrower.
+- **Useless prior (µ = 5)**: residuals are `Y − 5`, nearly the same variance as
+  Y but shifted. The GP does the same amount of work for the same result —
+  no gain, no loss in accuracy, but slightly wider CIs because the shifted
+  residuals still span the full range.
+
+## Residual view (what the GP actually fits internally)
+
+```{r residuals-plot, fig.width=9, fig.height=4}
+resid_df <- rbind(
+  data.frame(x = X_train, r = as.numeric(Y_train),
+             model = "No prior  (fits raw Y)"),
+  data.frame(x = X_train, r = Y_train - prior_good_train,
+             model = "Good prior  (fits Y − x = sin(3x) + ε)"),
+  data.frame(x = X_train, r = Y_train - prior_bad_train,
+             model = "Useless prior  (fits Y − 5)")
+)
+
+ggplot(resid_df, aes(x, r)) +
+  geom_point(alpha = 0.6, size = 1.5) +
+  geom_hline(yintercept = 0, lty = "dashed") +
+  facet_wrap(~model, nrow = 1) +
+  labs(title = "What each GP sees as its training signal",
+       x = "X", y = "Residual") +
+  theme_minimal()
+```
