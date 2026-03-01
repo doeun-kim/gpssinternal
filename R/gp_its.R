@@ -337,8 +337,10 @@ gp_its <- function(y, dates, date_treat,
 }
 
 #' Print method for gp_its objects
+#' @param x a gp_its object
+#' @param ... additional arguments (not used)
 #' @keywords internal
-#' @noRd
+#' @export
 print.gp_its <- function(x, ...) {
   cat("GP-ITS Model\n")
   cat(strrep("-", 40), "\n")
@@ -366,8 +368,10 @@ print.gp_its <- function(x, ...) {
 }
 
 #' Summary method for gp_its objects
+#' @param object a gp_its object
+#' @param ... additional arguments (not used)
 #' @keywords internal
-#' @noRd
+#' @export
 summary.gp_its <- function(object, ...) {
   x <- object
 
