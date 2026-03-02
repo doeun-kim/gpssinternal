@@ -172,8 +172,10 @@ gp_rdd_plot <- function(gp_rdd_res,
 
 
 #' Print method for gp_rdd objects
+#' @param x a gp_rdd object
+#' @param ... additional arguments (not used)
 #' @keywords internal
-#' @noRd
+#' @export
 print.gp_rdd <- function(x, ...) {
   cat("GP-RDD Model\n")
   cat(strrep("-", 40), "\n")
@@ -188,8 +190,10 @@ print.gp_rdd <- function(x, ...) {
 }
 
 #' Summary method for gp_rdd objects
+#' @param x a gp_rdd object
+#' @param ... additional arguments (not used)
 #' @keywords internal
-#' @noRd
+#' @export
 summary.gp_rdd <- function(x, ...) {
   cat("GP-RDD Model Summary\n")
   cat(strrep("=", 50), "\n\n")

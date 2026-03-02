@@ -114,7 +114,6 @@ mixed_data_processing <- function(X, cat_columns = NULL, Xtest = NULL
 #
 #' @return cholesky-decomposed matrix
 #
-#' @importFrom kbal b_maxvarK
 #' @keywords internal
 #' @noRd
 getb_maxvar <- function(x, kernel_type = "gaussian", period = NULL, maxsearch_b = 2000) {
@@ -244,7 +243,7 @@ kernel_symmetric <- function(x, b, kernel_type = "gaussian", period = NULL) {
 #' @param min_obs
 #' @return null
 #
-#' @importFrom stats fft residulas lm var
+#' @importFrom stats fft residuals lm var
 #' @keywords internal
 #' @noRd
 estimate_period <- function(y, min_obs=7) {
