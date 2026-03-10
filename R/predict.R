@@ -6,6 +6,7 @@
 #' @param format "default" or "rvar"
 #' @param interval "prediction" or "confidence"
 #' @param level a numerical value between 0 and 1
+#' @param prior_mean a numeric vector of prior mean values for Y at each test observation. Required when the model was trained with a \code{prior_mean}; see \code{\link{gp_predict}}. (default = NULL)
 #' @param ... additional arguments (not used)
 #' @inheritParams stats::predict
 #' @examples
@@ -24,7 +25,7 @@
 #' @export
 predict.gpss <- function(object, newdata = NULL, type = "response",
                          format = "default", interval = "confidence",
-                         level = 0.95, ...) {
+                         level = 0.95, prior_mean = NULL, ...) {
 
  # Input validation
   if (!isTRUE(format %in% c("default", "rvar"))) {
@@ -69,7 +70,7 @@ predict.gpss <- function(object, newdata = NULL, type = "response",
   X <- X[, colnames(object$X), drop = FALSE]
 
   # Get predictions
-  out <- gp_predict(object, Xtest = X)
+  out <- gp_predict(object, Xtest = X, prior_mean = prior_mean)
 
   # Select output type
   if (type == "response") {

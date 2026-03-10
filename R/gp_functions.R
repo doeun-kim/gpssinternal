@@ -45,6 +45,7 @@ gp_optimize <- function(K, Y, optim.tol=0.1) {
 #' @param mixed_data a logical value to indicate whether the covariates contain a categorical/binary variable (default = FALSE)
 #' @param cat_columns a character or a numerical vector indicating categorical variables. Must be character (not numeric) when time_col is specified. (default = NULL)
 #' @param Xtest a data frame or a matrix of testing covariates. This is necessary when a non-overlapping categorical value exists between training and testing data sets. (default = NULL)
+#' @param prior_mean a numeric vector of prior mean values for Y at each training observation. If provided, the GP is fitted to the residuals (Y - prior_mean), and the prior mean is added back to recover predictions on the original Y scale. Must be the same length as Y. (default = NULL)
 #'
 #' @return \item{post_mean_scaled}{posterior distribution of Y in a scaled form}
 #' \item{post_mean_orig}{posterior distribution of Y in an original scale}
@@ -70,6 +71,7 @@ gp_optimize <- function(K, Y, optim.tol=0.1) {
 #' \item{cat_num}{a numerical vector indicating the location of categorical/binary variables in an expanded version of X}
 #' \item{time_col}{the time column specification used (or NULL if not specified)}
 #' \item{Xcolnames}{column names of X}
+#' \item{prior_mean}{the prior mean vector supplied at training (or NULL)}
 #' @importFrom stats sd
 #' @importFrom Rcpp sourceCpp
 #'
@@ -77,7 +79,8 @@ gp_optimize <- function(K, Y, optim.tol=0.1) {
 gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
                      scale = TRUE, kernel_type = "gaussian", period = NULL,
                      time_col = NULL,
-                     mixed_data = FALSE, cat_columns = NULL, Xtest = NULL) {
+                     mixed_data = FALSE, cat_columns = NULL, Xtest = NULL,
+                     prior_mean = NULL) {
 
   # Validate kernel_type matches available options
   kernel_type <- match.arg(kernel_type,
@@ -133,9 +136,19 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
 
   # Pre-process outcome Y
   Y.init <- as.numeric(Y)
+
+  # Subtract prior mean if provided (GP learns residuals; prior added back at prediction)
+  if (!is.null(prior_mean)) {
+    prior_mean <- as.numeric(prior_mean)
+    if (length(prior_mean) != length(Y.init)) {
+      stop("`prior_mean` must have the same length as `Y`.")
+    }
+    Y.init <- Y.init - prior_mean
+  }
+
   Y.init.mean <- mean(Y.init)
   Y.init.sd <- sd(Y.init)
-  Y <- scale(Y, center = Y.init.mean, scale = Y.init.sd)
+  Y <- scale(Y.init, center = Y.init.mean, scale = Y.init.sd)
 
   if (!is.null(Xtest)) {
     Xtest.orig <- as.matrix(Xtest) # Save original *unprocessed* Xtest
@@ -256,8 +269,11 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
   post_cov_scaled <- K - K %*% K_inv %*% K
   prior_mean_scaled <- m
 
-  # Rescale to original
+  # Rescale to original (add back prior mean if provided)
   post_mean_orig <- post_mean_scaled * Y.init.sd + Y.init.mean
+  if (!is.null(prior_mean)) {
+    post_mean_orig <- post_mean_orig + prior_mean
+  }
   post_cov_orig <- Y.init.sd^2 * post_cov_scaled
 
   results <- list(
@@ -292,7 +308,8 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
     cont_num_processed = cont_num_processed, # processed cont indices
     scale = scale,
     time_col = time_col, # store time_col for gp_predict
-    Xcolnames = colnames(X)
+    Xcolnames = colnames(X),
+    prior_mean = prior_mean
   )
   return(results)
 }
@@ -303,6 +320,7 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
 #'
 #' @param gp a list-form object obtained from gp_train()
 #' @param Xtest a data frame or a matrix of testing data set
+#' @param prior_mean a numeric vector of prior mean values for Y at each test point. Required when the model was trained with a \code{prior_mean}; added to \code{Ys_mean_orig} to recover predictions on the original Y scale. Must be the same length as \code{nrow(Xtest)}. (default = NULL)
 #' @importFrom Rcpp sourceCpp
 #' @return \item{Xtest_scaled}{testing data in a scaled form}
 #' \item{Xtest}{the original testing data set}
@@ -315,7 +333,7 @@ gp_train <- function(X, Y, b = NULL, s2 = 0.3, optimize = FALSE,
 #' \item{s2}{the s2 value obtained from gp_train()}
 #' @export
 
-gp_predict <- function(gp, Xtest) {
+gp_predict <- function(gp, Xtest, prior_mean = NULL) {
   mixed_data <- gp$mixed_data
   Xtest_init <- as.matrix(Xtest) #unprocessed test data
 
@@ -393,6 +411,17 @@ gp_predict <- function(gp, Xtest) {
   # Compute predictive mean
   Ys_mean_scaled <- c(Ks %*% gp$alpha)
   Ys_mean_orig <- Ys_mean_scaled * gp$Y.init.sd + gp$Y.init.mean
+
+  # Add prior mean if provided (required when model was trained with prior_mean)
+  if (!is.null(prior_mean)) {
+    prior_mean <- as.numeric(prior_mean)
+    if (length(prior_mean) != length(Ys_mean_orig)) {
+      stop("`prior_mean` must have the same length as `nrow(Xtest)`.")
+    }
+    Ys_mean_orig <- Ys_mean_orig + prior_mean
+  } else if (!is.null(gp$prior_mean)) {
+    warning("This model was trained with a `prior_mean`, but none was provided to `gp_predict()`. `Ys_mean_orig` reflects predictions for the residuals, not the original outcome.")
+  }
 
   # Compute predictive covariance
   v <- solve(t(gp$L), t(Ks))

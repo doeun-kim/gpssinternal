@@ -35,8 +35,10 @@ formula_to_design <- function(formula, data) {
 #' p <- predict(mod, dat_test)
 #' length(p)
 #' head(p)
+#' @param prior_mean a numeric vector of prior mean values for Y at each training observation. See \code{\link{gp_train}} for details. (default = NULL)
 #' @export
-gpss <- function(formula, data, b = NULL, s2 = 0.3, optimize = FALSE, scale = TRUE) {
+gpss <- function(formula, data, b = NULL, s2 = 0.3, optimize = FALSE, scale = TRUE,
+                 prior_mean = NULL) {
   # check user input and return an informative error if the user supplied incorrect objects
   sanity_formula_data(formula, data)
 
@@ -56,7 +58,8 @@ gpss <- function(formula, data, b = NULL, s2 = 0.3, optimize = FALSE, scale = TR
   # fit model
   Y <- model.response(model.frame(formula, data))
   X <- formula_to_design(formula, data)
-  out <- gp_train(X, Y, b = b, s2 = s2, optimize = optimize, scale = scale)
+  out <- gp_train(X, Y, b = b, s2 = s2, optimize = optimize, scale = scale,
+                  prior_mean = prior_mean)
 
   # output
   attr(out, "formula") <- formula
